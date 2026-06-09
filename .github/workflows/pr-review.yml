@@ -1,0 +1,81 @@
+name: Bob PR Review
+
+# Trigger on pull request events
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  bob-review:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      pull-requests: write
+      
+    steps:
+      # Step 1: Checkout the code
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Get full history for diff
+      
+      # Step 2: Get the PR diff
+      - name: Get PR diff
+        id: diff
+        run: |
+          # Fetch the base branch
+          git fetch origin ${{ github.base_ref }}
+          
+          # Get the diff between base and head
+          git diff origin/${{ github.base_ref }}...${{ github.sha }} > pr_diff.txt
+          
+          echo "Diff saved to pr_diff.txt"
+          
+      # Step 3: Call Bob API (Method A - if Bob has REST endpoint)
+      - name: Call Bob API for Review
+        id: bob-review
+        env:
+          BOB_API_KEY: ${{ secrets.BOB_API_KEY }}
+        run: |
+          # Read the diff
+          DIFF_CONTENT=$(cat pr_diff.txt)
+          
+          # Call Bob API (adjust URL based on Bob's actual endpoint)
+          # This is a placeholder - you'll need Bob's actual API endpoint
+          curl -X POST https://api.bob.dev/review \
+            -H "Authorization: Bearer $BOB_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"diff\": \"$DIFF_CONTENT\",
+              \"repository\": \"${{ github.repository }}\",
+              \"pr_number\": ${{ github.event.pull_request.number }}
+            }" \
+            -o bob_response.json
+          
+          echo "Bob review completed"
+      
+      # Step 4: Post Bob's comments to PR
+      - name: Post Review Comments
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            
+            // Read Bob's response
+            let bobResponse;
+            try {
+              bobResponse = JSON.parse(fs.readFileSync('bob_response.json', 'utf8'));
+            } catch (error) {
+              console.log('Could not parse Bob response');
+              return;
+            }
+            
+            // Post comment on PR
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## 🤖 Bob's Code Review\n\n${bobResponse.review || bobResponse.message || 'Review completed'}`
+            });
